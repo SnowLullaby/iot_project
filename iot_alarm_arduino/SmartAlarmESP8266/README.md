@@ -26,10 +26,9 @@
   - выходе влажности за диапазон 30..70%
 
 ## Подготовка
-1. Скопируйте `config.h.example` в `config.h`
-2. Укажите Wi-Fi и MQTT параметры
-3. Выберите в Arduino IDE плату `NodeMCU 1.0 (ESP-12E Module)`
-4. Загрузите скетч
+1. Укажите Wi-Fi и пароль в config.h
+2. Выберите в Arduino IDE плату `NodeMCU 1.0 (ESP-12E Module)`
+3. Загрузите скетч
 
 ## MQTT topics
 - `iot/alarm/<device_id>/telemetry`
