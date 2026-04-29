@@ -22,11 +22,14 @@ constexpr unsigned long RECONNECT_INTERVAL_MS = 5000UL;
 constexpr unsigned long EVENT_COOLDOWN_MS = 30000UL;                   // 30 seconds
 constexpr int WIFI_CONNECT_TIMEOUT_MS = 20000;
 
-constexpr float HUMIDITY_LOW_THRESHOLD = 30.0f;
-constexpr float HUMIDITY_HIGH_THRESHOLD = 70.0f;
+// Runtime thresholds. Can be changed from server via MQTT config topic.
+float humidityLowThreshold = 30.0f;
+float humidityHighThreshold = 70.0f;
+float temperatureLowThreshold = 18.0f;
+float temperatureHighThreshold = 30.0f;
 
 // FC-04 modules often have configurable digital output polarity.
-// If your logs show inverted values, change to HIGH.
+// If your logs show inverted values, change LOW <-> HIGH.
 constexpr uint8_t SOUND_ACTIVE_STATE = LOW;
 
 DHT dht(DHT_PIN, DHT_TYPE);
@@ -41,8 +44,11 @@ struct SensorSnapshot {
   int wifiRssi = 0;
   unsigned long uptimeMs = 0;
   bool validDht = false;
+
   bool humidityLow = false;
   bool humidityHigh = false;
+  bool temperatureLow = false;
+  bool temperatureHigh = false;
 };
 
 SensorSnapshot currentSnapshot;
@@ -51,22 +57,34 @@ SensorSnapshot lastGoodSnapshot;
 unsigned long lastSensorReadMs = 0;
 unsigned long lastTelemetryMs = 0;
 unsigned long lastReconnectAttemptMs = 0;
+
 unsigned long lastMotionEventMs = 0;
 unsigned long lastSoundEventMs = 0;
 unsigned long lastHumidityEventMs = 0;
+unsigned long lastTemperatureEventMs = 0;
 
 String baseTopic;
 String telemetryTopic;
 String eventsTopic;
 String statusTopic;
+String configTopic;
 
 void connectWiFi();
 bool ensureMqttConnected();
 void readSensors();
 void publishTelemetry(const char* reason);
-void publishAlarmEvent(const char* eventType, bool triggerMotion, bool triggerSound, bool triggerHumidityLow, bool triggerHumidityHigh);
+void publishAlarmEvent(
+  const char* eventType,
+  bool triggerMotion,
+  bool triggerSound,
+  bool triggerHumidityLow,
+  bool triggerHumidityHigh,
+  bool triggerTemperatureLow,
+  bool triggerTemperatureHigh
+);
 void publishStatus(const char* status);
 void buildPayload(JsonDocument& doc, const char* messageType, const char* reason = nullptr, const char* eventType = nullptr);
+void mqttCallback(char* topic, byte* payload, unsigned int length);
 
 void setup() {
   Serial.begin(115200);
@@ -81,10 +99,12 @@ void setup() {
   telemetryTopic = baseTopic + "/telemetry";
   eventsTopic = baseTopic + "/events";
   statusTopic = baseTopic + "/status";
+  configTopic = baseTopic + "/config";
 
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
   mqttClient.setBufferSize(1024);
   mqttClient.setKeepAlive(30);
+  mqttClient.setCallback(mqttCallback);
 
   connectWiFi();
   ensureMqttConnected();
@@ -109,12 +129,42 @@ void loop() {
     lastSensorReadMs = now;
     readSensors();
 
-    const bool motionTrigger = currentSnapshot.motionDetected && (now - lastMotionEventMs >= EVENT_COOLDOWN_MS);
-    const bool soundTrigger = currentSnapshot.soundDetected && (now - lastSoundEventMs >= EVENT_COOLDOWN_MS);
-    const bool humidityLowTrigger = currentSnapshot.validDht && currentSnapshot.humidityLow && (now - lastHumidityEventMs >= EVENT_COOLDOWN_MS);
-    const bool humidityHighTrigger = currentSnapshot.validDht && currentSnapshot.humidityHigh && (now - lastHumidityEventMs >= EVENT_COOLDOWN_MS);
+    const bool motionTrigger =
+      currentSnapshot.motionDetected &&
+      (now - lastMotionEventMs >= EVENT_COOLDOWN_MS);
 
-    const int triggerCount = (motionTrigger ? 1 : 0) + (soundTrigger ? 1 : 0) + (humidityLowTrigger ? 1 : 0) + (humidityHighTrigger ? 1 : 0);
+    const bool soundTrigger =
+      currentSnapshot.soundDetected &&
+      (now - lastSoundEventMs >= EVENT_COOLDOWN_MS);
+
+    const bool humidityLowTrigger =
+      currentSnapshot.validDht &&
+      currentSnapshot.humidityLow &&
+      (now - lastHumidityEventMs >= EVENT_COOLDOWN_MS);
+
+    const bool humidityHighTrigger =
+      currentSnapshot.validDht &&
+      currentSnapshot.humidityHigh &&
+      (now - lastHumidityEventMs >= EVENT_COOLDOWN_MS);
+
+    const bool temperatureLowTrigger =
+      currentSnapshot.validDht &&
+      currentSnapshot.temperatureLow &&
+      (now - lastTemperatureEventMs >= EVENT_COOLDOWN_MS);
+
+    const bool temperatureHighTrigger =
+      currentSnapshot.validDht &&
+      currentSnapshot.temperatureHigh &&
+      (now - lastTemperatureEventMs >= EVENT_COOLDOWN_MS);
+
+    const int triggerCount =
+      (motionTrigger ? 1 : 0) +
+      (soundTrigger ? 1 : 0) +
+      (humidityLowTrigger ? 1 : 0) +
+      (humidityHighTrigger ? 1 : 0) +
+      (temperatureLowTrigger ? 1 : 0) +
+      (temperatureHighTrigger ? 1 : 0);
+
     if (triggerCount > 0) {
       if (motionTrigger) {
         lastMotionEventMs = now;
@@ -125,6 +175,9 @@ void loop() {
       if (humidityLowTrigger || humidityHighTrigger) {
         lastHumidityEventMs = now;
       }
+      if (temperatureLowTrigger || temperatureHighTrigger) {
+        lastTemperatureEventMs = now;
+      }
 
       const char* eventType = "multi";
       if (triggerCount == 1) {
@@ -134,12 +187,24 @@ void loop() {
           eventType = "sound";
         } else if (humidityLowTrigger) {
           eventType = "humidity_low";
-        } else {
+        } else if (humidityHighTrigger) {
           eventType = "humidity_high";
+        } else if (temperatureLowTrigger) {
+          eventType = "temperature_low";
+        } else {
+          eventType = "temperature_high";
         }
       }
 
-      publishAlarmEvent(eventType, motionTrigger, soundTrigger, humidityLowTrigger, humidityHighTrigger);
+      publishAlarmEvent(
+        eventType,
+        motionTrigger,
+        soundTrigger,
+        humidityLowTrigger,
+        humidityHighTrigger,
+        temperatureLowTrigger,
+        temperatureHighTrigger
+      );
     }
   }
 
@@ -194,6 +259,7 @@ bool ensureMqttConnected() {
 
   if (connected) {
     Serial.println("MQTT connected.");
+    mqttClient.subscribe(configTopic.c_str(), 1);
     publishStatus("online");
     return true;
   }
@@ -223,8 +289,10 @@ void readSensors() {
     Serial.println("DHT read failed, using last good values.");
   }
 
-  currentSnapshot.humidityLow = currentSnapshot.validDht && currentSnapshot.humidityPct < HUMIDITY_LOW_THRESHOLD;
-  currentSnapshot.humidityHigh = currentSnapshot.validDht && currentSnapshot.humidityPct > HUMIDITY_HIGH_THRESHOLD;
+  currentSnapshot.humidityLow = currentSnapshot.validDht && currentSnapshot.humidityPct < humidityLowThreshold;
+  currentSnapshot.humidityHigh = currentSnapshot.validDht && currentSnapshot.humidityPct > humidityHighThreshold;
+  currentSnapshot.temperatureLow = currentSnapshot.validDht && currentSnapshot.temperatureC < temperatureLowThreshold;
+  currentSnapshot.temperatureHigh = currentSnapshot.validDht && currentSnapshot.temperatureC > temperatureHighThreshold;
 
   Serial.printf(
       "T=%.2fC H=%.2f%% Motion=%d Sound=%d RSSI=%d\n",
@@ -242,6 +310,7 @@ void publishTelemetry(const char* reason) {
 
   StaticJsonDocument<512> doc;
   buildPayload(doc, "telemetry", reason, nullptr);
+
   char payload[640];
   serializeJson(doc, payload, sizeof(payload));
 
@@ -249,7 +318,15 @@ void publishTelemetry(const char* reason) {
   Serial.printf("Telemetry publish: %s\n", ok ? "OK" : "FAILED");
 }
 
-void publishAlarmEvent(const char* eventType, bool triggerMotion, bool triggerSound, bool triggerHumidityLow, bool triggerHumidityHigh) {
+void publishAlarmEvent(
+  const char* eventType,
+  bool triggerMotion,
+  bool triggerSound,
+  bool triggerHumidityLow,
+  bool triggerHumidityHigh,
+  bool triggerTemperatureLow,
+  bool triggerTemperatureHigh
+) {
   if (!ensureMqttConnected()) {
     return;
   }
@@ -260,6 +337,8 @@ void publishAlarmEvent(const char* eventType, bool triggerMotion, bool triggerSo
   doc["trigger_sound"] = triggerSound;
   doc["trigger_humidity_low"] = triggerHumidityLow;
   doc["trigger_humidity_high"] = triggerHumidityHigh;
+  doc["trigger_temperature_low"] = triggerTemperatureLow;
+  doc["trigger_temperature_high"] = triggerTemperatureHigh;
 
   char payload[640];
   serializeJson(doc, payload, sizeof(payload));
@@ -285,8 +364,11 @@ void buildPayload(JsonDocument& doc, const char* messageType, const char* reason
   doc["wifi_rssi"] = currentSnapshot.wifiRssi;
   doc["uptime_ms"] = currentSnapshot.uptimeMs;
   doc["dht_ok"] = currentSnapshot.validDht;
-  doc["humidity_low_threshold"] = HUMIDITY_LOW_THRESHOLD;
-  doc["humidity_high_threshold"] = HUMIDITY_HIGH_THRESHOLD;
+
+  doc["humidity_low_threshold"] = humidityLowThreshold;
+  doc["humidity_high_threshold"] = humidityHighThreshold;
+  doc["temperature_low_threshold"] = temperatureLowThreshold;
+  doc["temperature_high_threshold"] = temperatureHighThreshold;
 
   if (reason != nullptr) {
     doc["reason"] = reason;
@@ -294,4 +376,38 @@ void buildPayload(JsonDocument& doc, const char* messageType, const char* reason
   if (eventType != nullptr) {
     doc["event_type"] = eventType;
   }
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  if (String(topic) != configTopic) {
+    return;
+  }
+
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, payload, length);
+  if (error) {
+    Serial.println("Failed to parse config JSON");
+    return;
+  }
+
+  if (doc["humidity_low_threshold"].is<float>()) {
+    humidityLowThreshold = doc["humidity_low_threshold"].as<float>();
+  }
+  if (doc["humidity_high_threshold"].is<float>()) {
+    humidityHighThreshold = doc["humidity_high_threshold"].as<float>();
+  }
+  if (doc["temperature_low_threshold"].is<float>()) {
+    temperatureLowThreshold = doc["temperature_low_threshold"].as<float>();
+  }
+  if (doc["temperature_high_threshold"].is<float>()) {
+    temperatureHighThreshold = doc["temperature_high_threshold"].as<float>();
+  }
+
+  Serial.printf(
+    "Config updated: H[%.1f..%.1f] T[%.1f..%.1f]\n",
+    humidityLowThreshold,
+    humidityHighThreshold,
+    temperatureLowThreshold,
+    temperatureHighThreshold
+  );
 }

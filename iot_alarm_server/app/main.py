@@ -2,6 +2,9 @@ import logging
 import math
 import os
 import uuid
+import json
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,11 +23,24 @@ from app.mqtt_worker import MqttWorker
 from app.services import build_capture_command
 from app.services import UPLOAD_DIR, latest_photo_by_event_ids, store_payload, store_photo_metadata
 
+from app.services import (
+    UPLOAD_DIR,
+    latest_photo_by_event_ids,
+    store_payload,
+    store_photo_metadata,
+    get_or_create_settings,
+    serialize_settings,
+    build_sensor_config_payload,
+    build_camera_config_payload,
+)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 PHOTO_UPLOAD_TOKEN = os.getenv("PHOTO_UPLOAD_TOKEN", "change_me_upload_token")
 MEDIA_URL_PREFIX = "/media"
+SENSOR_CONFIG_TOPIC = os.getenv("SENSOR_CONFIG_TOPIC", "iot/alarm/alarm-node-01/config")
+CAMERA_CONFIG_TOPIC = os.getenv("CAMERA_CONFIG_TOPIC", "iot/camera/cam-01/config")
 
 mqtt_worker = MqttWorker()
 templates = Jinja2Templates(directory="templates")
@@ -55,6 +71,11 @@ async def lifespan(app: FastAPI):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     mqtt_worker.start()
+
+    with get_session() as session:
+        settings_row = get_or_create_settings(session)
+        publish_runtime_config(settings_row)
+
     yield
     mqtt_worker.stop()
 
@@ -67,6 +88,20 @@ def photo_public_url(row: CameraPhoto | None) -> str | None:
     if row is None:
         return None
     return f"{MEDIA_URL_PREFIX}/{row.file_path}"
+
+
+def publish_runtime_config(settings_row) -> None:
+    if not mqtt_worker.client.is_connected():
+        logger.warning("MQTT is not connected, config publish skipped")
+        return
+
+    sensor_payload = json.dumps(build_sensor_config_payload(settings_row))
+    camera_payload = json.dumps(build_camera_config_payload(settings_row))
+
+    mqtt_worker.client.publish(SENSOR_CONFIG_TOPIC, sensor_payload, qos=1, retain=True)
+    mqtt_worker.client.publish(CAMERA_CONFIG_TOPIC, camera_payload, qos=1, retain=True)
+
+    logger.info("Published runtime config to sensor and camera topics")
 
 
 def serialize_telemetry(row: Telemetry) -> dict[str, Any]:
@@ -135,6 +170,47 @@ def dashboard_page(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
 
+@app.get("/ui/admin", response_class=HTMLResponse)
+def admin_page(request: Request, saved: int = 0):
+    with get_session() as session:
+        settings_row = get_or_create_settings(session)
+        settings_data = serialize_settings(settings_row)
+
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "settings": settings_data,
+            "saved": bool(saved),
+        },
+    )
+
+
+@app.post("/ui/admin")
+def admin_save(
+    humidity_low_threshold: float = Form(...),
+    humidity_high_threshold: float = Form(...),
+    temperature_low_threshold: float = Form(...),
+    temperature_high_threshold: float = Form(...),
+    camera_jpeg_quality: int = Form(...),
+):
+    camera_jpeg_quality = max(10, min(63, camera_jpeg_quality))
+
+    with get_session() as session:
+        settings_row = get_or_create_settings(session)
+        settings_row.humidity_low_threshold = humidity_low_threshold
+        settings_row.humidity_high_threshold = humidity_high_threshold
+        settings_row.temperature_low_threshold = temperature_low_threshold
+        settings_row.temperature_high_threshold = temperature_high_threshold
+        settings_row.camera_jpeg_quality = camera_jpeg_quality
+
+    with get_session() as session:
+        settings_row = get_or_create_settings(session)
+        publish_runtime_config(settings_row)
+
+    return RedirectResponse(url="/ui/admin?saved=1", status_code=303)
+
+
 @app.get("/ui/events/{event_id}", response_class=HTMLResponse)
 def event_detail_page(request: Request, event_id: int):
     with get_session() as session:
@@ -185,7 +261,7 @@ def health() -> dict[str, str]:
 @app.post("/api/ingest")
 def ingest(payload: IngestPayload) -> dict[str, str]:
     result = store_payload(payload.model_dump(), source="http")
-    if result.should_request_photo and result.alarm_event_id is not None and mqtt_worker.client.connected():
+    if result.should_request_photo and result.alarm_event_id is not None and mqtt_worker.client.is_connected():
         topic, command = build_capture_command(result, payload.model_dump())
         mqtt_worker.client.publish(topic, command, qos=1, retain=False)
     return {"status": "stored"}

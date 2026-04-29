@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from app.models import AppSettings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -145,3 +146,36 @@ def latest_photo_by_event_ids(event_ids: list[int]) -> dict[int, CameraPhoto]:
         if row.alarm_event_id is not None and row.alarm_event_id not in photos:
             photos[row.alarm_event_id] = row
     return photos
+
+def get_or_create_settings(session) -> AppSettings:
+    row = session.get(AppSettings, 1)
+    if row is None:
+        row = AppSettings(id=1)
+        session.add(row)
+        session.flush()
+    return row
+
+
+def serialize_settings(row: AppSettings) -> dict[str, Any]:
+    return {
+        "humidity_low_threshold": row.humidity_low_threshold,
+        "humidity_high_threshold": row.humidity_high_threshold,
+        "temperature_low_threshold": row.temperature_low_threshold,
+        "temperature_high_threshold": row.temperature_high_threshold,
+        "camera_jpeg_quality": row.camera_jpeg_quality,
+    }
+
+
+def build_sensor_config_payload(row: AppSettings) -> dict[str, Any]:
+    return {
+        "humidity_low_threshold": row.humidity_low_threshold,
+        "humidity_high_threshold": row.humidity_high_threshold,
+        "temperature_low_threshold": row.temperature_low_threshold,
+        "temperature_high_threshold": row.temperature_high_threshold,
+    }
+
+
+def build_camera_config_payload(row: AppSettings) -> dict[str, Any]:
+    return {
+        "jpeg_quality": row.camera_jpeg_quality,
+    }

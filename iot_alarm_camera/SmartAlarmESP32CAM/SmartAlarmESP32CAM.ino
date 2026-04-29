@@ -31,9 +31,15 @@ WiFiClient mqttNetClient;
 PubSubClient mqttClient(mqttNetClient);
 
 String captureTopic;
+String configTopic;
 String statusTopic;
+
 unsigned long lastMqttReconnectMs = 0;
 unsigned long lastCaptureMs = 0;
+
+// Меньше число = лучше качество, но больше размер файла.
+// Допустимый диапазон обычно 10..63.
+int currentJpegQuality = 12;
 
 bool connectWiFi();
 bool connectMqtt();
@@ -52,6 +58,7 @@ void setup() {
   }
 
   captureTopic = String(CAMERA_TOPIC_ROOT) + "/" + CAMERA_ID + "/capture";
+  configTopic = String(CAMERA_TOPIC_ROOT) + "/" + CAMERA_ID + "/config";
   statusTopic = String(CAMERA_TOPIC_ROOT) + "/" + CAMERA_ID + "/status";
 
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
@@ -123,6 +130,7 @@ bool connectMqtt() {
 
   if (ok) {
     mqttClient.subscribe(captureTopic.c_str(), 1);
+    mqttClient.subscribe(configTopic.c_str(), 1);
     publishStatus("online");
     Serial.println("Camera MQTT connected.");
     return true;
@@ -157,11 +165,11 @@ bool initCamera() {
 
   if (psramFound()) {
     config.frame_size = FRAMESIZE_VGA;
-    config.jpeg_quality = 12;
+    config.jpeg_quality = currentJpegQuality;
     config.fb_count = 2;
   } else {
     config.frame_size = FRAMESIZE_QVGA;
-    config.jpeg_quality = 15;
+    config.jpeg_quality = currentJpegQuality;
     config.fb_count = 1;
   }
 
@@ -172,13 +180,47 @@ bool initCamera() {
   }
 
   sensor_t* sensor = esp_camera_sensor_get();
-  sensor->set_brightness(sensor, 0);
-  sensor->set_saturation(sensor, 0);
+  if (sensor != nullptr) {
+    sensor->set_brightness(sensor, 0);
+    sensor->set_saturation(sensor, 0);
+    sensor->set_quality(sensor, currentJpegQuality);
+  }
+
+  Serial.printf("Camera initialized with jpeg_quality=%d\n", currentJpegQuality);
   return true;
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.printf("MQTT command on %s\n", topic);
+
+  // 1) Конфиг камеры
+  if (String(topic) == configTopic) {
+    StaticJsonDocument<128> doc;
+    DeserializationError error = deserializeJson(doc, payload, length);
+    if (error) {
+      Serial.println("Failed to parse camera config JSON.");
+      publishStatus("error", "bad_config_json");
+      return;
+    }
+
+    if (doc["jpeg_quality"].is<int>()) {
+      currentJpegQuality = constrain(doc["jpeg_quality"].as<int>(), 10, 63);
+
+      sensor_t* sensor = esp_camera_sensor_get();
+      if (sensor != nullptr) {
+        sensor->set_quality(sensor, currentJpegQuality);
+      }
+
+      Serial.printf("Camera jpeg_quality updated: %d\n", currentJpegQuality);
+      publishStatus("config_applied", "jpeg_quality_updated");
+    }
+    return;
+  }
+
+  // 2) Команда на снимок
+  if (String(topic) != captureTopic) {
+    return;
+  }
 
   StaticJsonDocument<512> doc;
   DeserializationError error = deserializeJson(doc, payload, length);
@@ -218,7 +260,8 @@ bool uploadPhoto(int alarmEventId, const char* deviceId, const char* eventType) 
   WiFiClient uploadClient;
   HTTPClient http;
 
-  String url = String(SERVER_UPLOAD_URL) + "?camera_id=" + urlEncode(CAMERA_ID)
+  String url = String(SERVER_UPLOAD_URL)
+      + "?camera_id=" + urlEncode(CAMERA_ID)
       + "&device_id=" + urlEncode(deviceId)
       + "&event_type=" + urlEncode(eventType)
       + "&alarm_event_id=" + String(alarmEventId);
@@ -253,6 +296,7 @@ void publishStatus(const char* status, const char* details) {
   doc["status"] = status;
   doc["details"] = details ? details : "";
   doc["wifi_rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
+  doc["jpeg_quality"] = currentJpegQuality;
 
   char buffer[320];
   serializeJson(doc, buffer, sizeof(buffer));

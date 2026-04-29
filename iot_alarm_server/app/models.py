@@ -53,3 +53,14 @@ class CameraPhoto(Base):
     size_bytes: Mapped[int] = mapped_column(Integer)
     captured_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     source: Mapped[str] = mapped_column(String(20), default="camera_upload")
+
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    humidity_low_threshold: Mapped[float] = mapped_column(Float, default=30.0)
+    humidity_high_threshold: Mapped[float] = mapped_column(Float, default=70.0)
+    temperature_low_threshold: Mapped[float] = mapped_column(Float, default=18.0)
+    temperature_high_threshold: Mapped[float] = mapped_column(Float, default=30.0)
+    camera_jpeg_quality: Mapped[int] = mapped_column(Integer, default=12)
+    updated_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

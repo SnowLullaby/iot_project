@@ -48,6 +48,8 @@ services:
       CAMERA_TOPIC_ROOT: iot/camera
       PHOTO_UPLOAD_TOKEN: change_me_upload_token
       UPLOAD_DIR: /app/uploads
+      SENSOR_CONFIG_TOPIC: iot/alarm/alarm-node-01/config
+      CAMERA_CONFIG_TOPIC: iot/camera/cam-01/config
     ports:
       - "8000:8000"
     volumes:
