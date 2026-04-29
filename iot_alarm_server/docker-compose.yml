@@ -44,8 +44,15 @@ services:
       MQTT_USERNAME: iot_user
       MQTT_PASSWORD: iot_password
       MQTT_TOPIC: iot/alarm/+/+
+      DEFAULT_CAMERA_ID: cam-01
+      CAMERA_TOPIC_ROOT: iot/camera
+      PHOTO_UPLOAD_TOKEN: change_me_upload_token
+      UPLOAD_DIR: /app/uploads
     ports:
       - "8000:8000"
+    volumes:
+      - uploads_data:/app/uploads
 
 volumes:
   postgres_data:
+  uploads_data:

@@ -17,9 +17,9 @@ constexpr uint8_t SOUND_PIN = D7;
 constexpr uint8_t DHT_TYPE = DHT11;
 
 constexpr unsigned long SENSOR_READ_INTERVAL_MS = 5000UL;
-constexpr unsigned long TELEMETRY_INTERVAL_MS = 30UL * 1000UL;  // 30 seconds
+constexpr unsigned long TELEMETRY_INTERVAL_MS = 10UL * 60UL * 1000UL;  // 10 minutes
 constexpr unsigned long RECONNECT_INTERVAL_MS = 5000UL;
-constexpr unsigned long EVENT_COOLDOWN_MS = 15000UL;
+constexpr unsigned long EVENT_COOLDOWN_MS = 30000UL;                   // 30 seconds
 constexpr int WIFI_CONNECT_TIMEOUT_MS = 20000;
 
 constexpr float HUMIDITY_LOW_THRESHOLD = 30.0f;
@@ -41,6 +41,8 @@ struct SensorSnapshot {
   int wifiRssi = 0;
   unsigned long uptimeMs = 0;
   bool validDht = false;
+  bool humidityLow = false;
+  bool humidityHigh = false;
 };
 
 SensorSnapshot currentSnapshot;
@@ -53,7 +55,6 @@ unsigned long lastMotionEventMs = 0;
 unsigned long lastSoundEventMs = 0;
 unsigned long lastHumidityEventMs = 0;
 
-bool humidityAlarmActive = false;
 String baseTopic;
 String telemetryTopic;
 String eventsTopic;
@@ -63,7 +64,7 @@ void connectWiFi();
 bool ensureMqttConnected();
 void readSensors();
 void publishTelemetry(const char* reason);
-void publishAlarmEvent(const char* eventType);
+void publishAlarmEvent(const char* eventType, bool triggerMotion, bool triggerSound, bool triggerHumidityLow, bool triggerHumidityHigh);
 void publishStatus(const char* status);
 void buildPayload(JsonDocument& doc, const char* messageType, const char* reason = nullptr, const char* eventType = nullptr);
 
@@ -83,10 +84,15 @@ void setup() {
 
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
   mqttClient.setBufferSize(1024);
+  mqttClient.setKeepAlive(30);
 
   connectWiFi();
   ensureMqttConnected();
   publishStatus("online");
+
+  readSensors();
+  publishTelemetry("boot");
+  lastTelemetryMs = millis();
 }
 
 void loop() {
@@ -103,34 +109,37 @@ void loop() {
     lastSensorReadMs = now;
     readSensors();
 
-    if (currentSnapshot.motionDetected && (now - lastMotionEventMs >= EVENT_COOLDOWN_MS)) {
-      lastMotionEventMs = now;
-      publishAlarmEvent("motion");
-    }
+    const bool motionTrigger = currentSnapshot.motionDetected && (now - lastMotionEventMs >= EVENT_COOLDOWN_MS);
+    const bool soundTrigger = currentSnapshot.soundDetected && (now - lastSoundEventMs >= EVENT_COOLDOWN_MS);
+    const bool humidityLowTrigger = currentSnapshot.validDht && currentSnapshot.humidityLow && (now - lastHumidityEventMs >= EVENT_COOLDOWN_MS);
+    const bool humidityHighTrigger = currentSnapshot.validDht && currentSnapshot.humidityHigh && (now - lastHumidityEventMs >= EVENT_COOLDOWN_MS);
 
-    if (currentSnapshot.soundDetected && (now - lastSoundEventMs >= EVENT_COOLDOWN_MS)) {
-      lastSoundEventMs = now;
-      publishAlarmEvent("sound");
-    }
-
-    if (currentSnapshot.validDht) {
-      const bool humidityOutOfRange =
-          currentSnapshot.humidityPct < HUMIDITY_LOW_THRESHOLD ||
-          currentSnapshot.humidityPct > HUMIDITY_HIGH_THRESHOLD;
-
-      if (humidityOutOfRange && !humidityAlarmActive && (now - lastHumidityEventMs >= EVENT_COOLDOWN_MS)) {
-        humidityAlarmActive = true;
+    const int triggerCount = (motionTrigger ? 1 : 0) + (soundTrigger ? 1 : 0) + (humidityLowTrigger ? 1 : 0) + (humidityHighTrigger ? 1 : 0);
+    if (triggerCount > 0) {
+      if (motionTrigger) {
+        lastMotionEventMs = now;
+      }
+      if (soundTrigger) {
+        lastSoundEventMs = now;
+      }
+      if (humidityLowTrigger || humidityHighTrigger) {
         lastHumidityEventMs = now;
-        if (currentSnapshot.humidityPct < HUMIDITY_LOW_THRESHOLD) {
-          publishAlarmEvent("humidity_low");
+      }
+
+      const char* eventType = "multi";
+      if (triggerCount == 1) {
+        if (motionTrigger) {
+          eventType = "motion";
+        } else if (soundTrigger) {
+          eventType = "sound";
+        } else if (humidityLowTrigger) {
+          eventType = "humidity_low";
         } else {
-          publishAlarmEvent("humidity_high");
+          eventType = "humidity_high";
         }
       }
 
-      if (!humidityOutOfRange) {
-        humidityAlarmActive = false;
-      }
+      publishAlarmEvent(eventType, motionTrigger, soundTrigger, humidityLowTrigger, humidityHighTrigger);
     }
   }
 
@@ -172,7 +181,6 @@ bool ensureMqttConnected() {
   lastReconnectAttemptMs = now;
 
   String clientId = String(DEVICE_ID) + "-" + String(ESP.getChipId(), HEX);
-  mqttClient.setKeepAlive(30);
 
   Serial.printf("Connecting to MQTT broker %s:%d...\n", MQTT_HOST, MQTT_PORT);
   const bool connected = mqttClient.connect(
@@ -197,7 +205,7 @@ bool ensureMqttConnected() {
 void readSensors() {
   currentSnapshot.motionDetected = digitalRead(PIR_PIN) == HIGH;
   currentSnapshot.soundDetected = digitalRead(SOUND_PIN) == SOUND_ACTIVE_STATE;
-  currentSnapshot.wifiRssi = WiFi.RSSI();
+  currentSnapshot.wifiRssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
   currentSnapshot.uptimeMs = millis();
 
   const float humidity = dht.readHumidity();
@@ -215,6 +223,9 @@ void readSensors() {
     Serial.println("DHT read failed, using last good values.");
   }
 
+  currentSnapshot.humidityLow = currentSnapshot.validDht && currentSnapshot.humidityPct < HUMIDITY_LOW_THRESHOLD;
+  currentSnapshot.humidityHigh = currentSnapshot.validDht && currentSnapshot.humidityPct > HUMIDITY_HIGH_THRESHOLD;
+
   Serial.printf(
       "T=%.2fC H=%.2f%% Motion=%d Sound=%d RSSI=%d\n",
       currentSnapshot.temperatureC,
@@ -229,23 +240,28 @@ void publishTelemetry(const char* reason) {
     return;
   }
 
-  StaticJsonDocument<384> doc;
+  StaticJsonDocument<512> doc;
   buildPayload(doc, "telemetry", reason, nullptr);
-  char payload[512];
+  char payload[640];
   serializeJson(doc, payload, sizeof(payload));
 
-  const bool ok = mqttClient.publish(telemetryTopic.c_str(), payload, true);
+  const bool ok = mqttClient.publish(telemetryTopic.c_str(), payload, false);
   Serial.printf("Telemetry publish: %s\n", ok ? "OK" : "FAILED");
 }
 
-void publishAlarmEvent(const char* eventType) {
+void publishAlarmEvent(const char* eventType, bool triggerMotion, bool triggerSound, bool triggerHumidityLow, bool triggerHumidityHigh) {
   if (!ensureMqttConnected()) {
     return;
   }
 
-  StaticJsonDocument<384> doc;
+  StaticJsonDocument<512> doc;
   buildPayload(doc, "alarm", nullptr, eventType);
-  char payload[512];
+  doc["trigger_motion"] = triggerMotion;
+  doc["trigger_sound"] = triggerSound;
+  doc["trigger_humidity_low"] = triggerHumidityLow;
+  doc["trigger_humidity_high"] = triggerHumidityHigh;
+
+  char payload[640];
   serializeJson(doc, payload, sizeof(payload));
 
   const bool ok = mqttClient.publish(eventsTopic.c_str(), payload, false);

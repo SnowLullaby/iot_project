@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alarm Event {{ event.id }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f5f7fb; color: #18212f; margin: 0; }
+    main { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    .card { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    .photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    img { width: 100%; border-radius: 10px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0f1720; color: #e8eef8; padding: 12px; border-radius: 10px; }
+    a { color: #1f4b99; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="/">← Назад на dashboard</a></p>
+
+    <section class="card">
+      <h1>Событие #{{ event.id }}</h1>
+      <p><strong>Устройство:</strong> {{ event.device_id }}</p>
+      <p><strong>Время:</strong> {{ event.received_at }}</p>
+      <p><strong>Тип:</strong> {{ event.event_type }}</p>
+      <p><strong>Температура:</strong> {{ event.temperature_c }}</p>
+      <p><strong>Влажность:</strong> {{ event.humidity_pct }}</p>
+      <p><strong>Motion:</strong> {{ event.motion }}</p>
+      <p><strong>Sound:</strong> {{ event.sound }}</p>
+      <p><strong>RSSI:</strong> {{ event.wifi_rssi }} dBm</p>
+    </section>
+
+    <section class="card">
+      <h2>Фотографии</h2>
+      <div class="photos">
+        {% for photo in photos %}
+          <div>
+            <a href="{{ photo.url }}" target="_blank"><img src="{{ photo.url }}" alt="photo-{{ photo.id }}"></a>
+            <p>camera: {{ photo.camera_id }} | {{ photo.captured_at }}</p>
+          </div>
+        {% else %}
+          <p>Фотографий пока нет.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>raw_payload</h2>
+      <pre>{{ event.raw_payload | tojson(indent=2) }}</pre>
+    </section>
+  </main>
+</body>
+</html>

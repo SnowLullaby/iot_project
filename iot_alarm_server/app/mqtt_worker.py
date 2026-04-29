@@ -2,12 +2,10 @@ import json
 import logging
 import os
 import time
-from typing import Any
 
 import paho.mqtt.client as mqtt
 
-from app.db import get_session
-from app.models import AlarmEvent, Telemetry
+from app.services import build_capture_command, store_payload
 
 logger = logging.getLogger(__name__)
 
@@ -16,44 +14,6 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", "iot_user")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "iot_password")
 MQTT_TOPIC = os.getenv("MQTT_TOPIC", "iot/alarm/+/+")
-
-
-def save_payload(payload: dict[str, Any], source: str = "mqtt") -> None:
-    message_type = payload.get("message_type")
-    device_id = payload.get("device_id", "unknown")
-
-    with get_session() as session:
-        if message_type == "telemetry":
-            row = Telemetry(
-                device_id=device_id,
-                temperature_c=payload.get("temperature_c"),
-                humidity_pct=payload.get("humidity_pct"),
-                motion=bool(payload.get("motion", False)),
-                sound=bool(payload.get("sound", False)),
-                wifi_rssi=payload.get("wifi_rssi"),
-                uptime_ms=payload.get("uptime_ms"),
-                source=source,
-                raw_payload=payload,
-            )
-            session.add(row)
-            logger.info("Saved telemetry from %s", device_id)
-        elif message_type == "alarm":
-            row = AlarmEvent(
-                device_id=device_id,
-                event_type=payload.get("event_type", "unknown"),
-                temperature_c=payload.get("temperature_c"),
-                humidity_pct=payload.get("humidity_pct"),
-                motion=bool(payload.get("motion", False)),
-                sound=bool(payload.get("sound", False)),
-                wifi_rssi=payload.get("wifi_rssi"),
-                uptime_ms=payload.get("uptime_ms"),
-                source=source,
-                raw_payload=payload,
-            )
-            session.add(row)
-            logger.info("Saved alarm event from %s", device_id)
-        else:
-            logger.warning("Unknown message_type: %s", message_type)
 
 
 class MqttWorker:
@@ -79,7 +39,16 @@ class MqttWorker:
     def on_message(self, client, userdata, msg):
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
-            save_payload(payload, source="mqtt")
+            result = store_payload(payload, source="mqtt")
+            if result.should_request_photo and result.alarm_event_id is not None:
+                topic, command = build_capture_command(result, payload)
+                info = client.publish(topic, command, qos=1, retain=False)
+                logger.info(
+                    "Published camera capture request for event_id=%s to %s (mid=%s)",
+                    result.alarm_event_id,
+                    topic,
+                    info.mid,
+                )
         except json.JSONDecodeError:
             logger.exception("Failed to decode MQTT JSON on topic %s", msg.topic)
         except Exception:
@@ -109,3 +78,4 @@ class MqttWorker:
             self.client.disconnect()
         except Exception:
             logger.exception("Failed to stop MQTT worker cleanly")
+

@@ -1,33 +1,61 @@
-# IoT Alarm Server (MVP)
+# IoT Alarm Server v2
 
-Минимальный сервер для проекта сигнализации:
+Обновлённый сервер для прототипа сигнализации:
 - принимает MQTT-сообщения от ESP8266
 - сохраняет телеметрию и alarm-события в PostgreSQL
-- даёт простой HTTP API для просмотра данных
+- при alarm публикует команду на ESP32-CAM сделать фото
+- принимает JPEG от камеры по HTTP
+- хранит путь к фото в БД
+- показывает dashboard и страницы событий
 
-## Быстрый старт
+## Что сохраняется из старой базы
+Старые таблицы `telemetry` и `alarm_events` **не удаляются и не пересоздаются**.
+Новая версия просто создаёт дополнительную таблицу `camera_photos`.
+
+## Перед обновлением
 ```bash
-docker compose up --build
+chmod +x scripts/backup_db.sh
+./scripts/backup_db.sh
+```
+
+## Запуск
+```bash
+docker compose up -d --build
 ```
 
 После запуска:
-- HTTP API: http://localhost:8000
-- Swagger: http://localhost:8000/docs
-- MQTT broker: localhost:1883
-- PostgreSQL: localhost:5432
+- dashboard: http://213.176.65.184:8000/
+- Swagger: http://213.176.65.184:8000/docs
+- MQTT broker: 213.176.65.184:1883
 
-## MQTT topics
-Сервер слушает:
-- `iot/alarm/+/telemetry`
-- `iot/alarm/+/events`
-- `iot/alarm/+/status` (статусы не пишет, но их можно расширить позже)
+## Новый поток данных
+1. ESP8266 отправляет telemetry и alarm в MQTT
+2. Сервер сохраняет alarm в `alarm_events`
+3. Сервер публикует MQTT-команду в `iot/camera/cam-01/capture`
+4. ESP32-CAM делает фото и грузит JPEG на `POST /api/photos/upload`
+5. Сервер сохраняет файл в `uploads/` и метаданные в `camera_photos`
+6. Фото и события видны на сайте
 
-## Примеры API
-- `GET /health`
-- `GET /api/latest`
-- `GET /api/telemetry?limit=50`
-- `GET /api/events?limit=50`
+## Полезные адреса
+- `GET /api/telemetry`
+- `GET /api/events`
+- `GET /api/events/{id}`
+- `GET /api/photos`
+- `GET /api/dashboard`
 
-## Временное упрощение
-В `mosquitto.conf` включён `allow_anonymous true`, чтобы не тормозить MVP.
-Позже лучше включить логин/пароль и TLS.
+## Проверка БД
+```bash
+docker exec -it iot_alarm_postgres psql -U iot_user -d iot_alarm
+```
+
+Внутри psql:
+```sql
+\dt
+SELECT id, device_id, received_at, temperature_c, humidity_pct, motion, sound FROM telemetry ORDER BY received_at DESC LIMIT 10;
+SELECT id, device_id, received_at, event_type FROM alarm_events ORDER BY received_at DESC LIMIT 10;
+SELECT id, alarm_event_id, camera_id, device_id, captured_at, file_path FROM camera_photos ORDER BY captured_at DESC LIMIT 10;
+```
+
+## Проверка сайта
+- `/` — dashboard
+- `/ui/events/<id>` — карточка события и фотографии

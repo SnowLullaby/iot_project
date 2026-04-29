@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IoT Alarm Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fb; color: #18212f; }
+    header { background: #1f4b99; color: white; padding: 16px 24px; }
+    main { padding: 20px; display: grid; gap: 20px; }
+    .card { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    h1, h2 { margin: 0 0 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #e6ebf2; text-align: left; font-size: 14px; vertical-align: top; }
+    th { background: #f0f4fa; }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .photo-card { border: 1px solid #dfe6f1; border-radius: 10px; overflow: hidden; background: #fff; }
+    .photo-card img { width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover; background: #e6ebf2; }
+    .photo-meta { padding: 8px; font-size: 13px; }
+    a { color: #1f4b99; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .muted { color: #c9d6ee; font-size: 13px; }
+    .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+    .pager button {
+      border: 1px solid #cfd8e6;
+      background: #fff;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .pager button:disabled { cursor: not-allowed; opacity: 0.5; }
+    .status-true { color: #0a7a29; font-weight: 600; }
+    .status-false { color: #6b7788; }
+    .small { font-size: 12px; color: #6b7788; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>IoT Alarm Dashboard</h1>
+    <div class="muted">Автообновление каждые 10 секунд</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Тревожные события</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Устройство</th>
+            <th>Время</th>
+            <th>Вид события</th>
+            <th>Температура</th>
+            <th>Влажность</th>
+            <th>Motion</th>
+            <th>Sound</th>
+            <th>Фото</th>
+          </tr>
+        </thead>
+        <tbody id="events-body"></tbody>
+      </table>
+      <div class="pager" id="events-pager"></div>
+    </section>
+
+    <section class="card">
+      <h2>Последняя телеметрия</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Устройство</th>
+            <th>Время</th>
+            <th>Температура</th>
+            <th>Влажность</th>
+            <th>Motion</th>
+            <th>Sound</th>
+          </tr>
+        </thead>
+        <tbody id="telemetry-body"></tbody>
+      </table>
+      <div class="pager" id="telemetry-pager"></div>
+    </section>
+
+    <section class="card">
+      <h2>Последние фотографии</h2>
+      <div class="gallery" id="photos-gallery"></div>
+      <div class="pager" id="photos-pager"></div>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      events: { page: 1, perPage: 10 },
+      telemetry: { page: 1, perPage: 10 },
+      photos: { page: 1, perPage: 8 },
+    };
+
+    function fmt(value) {
+      if (!value) return '';
+      return new Date(value).toLocaleString('ru-RU');
+    }
+
+    function yesNo(value) {
+      return value
+        ? '<span class="status-true">yes</span>'
+        : '<span class="status-false">no</span>';
+    }
+
+    function safe(value) {
+      return value ?? '';
+    }
+
+    function renderPager(containerId, payload, onPageChange) {
+      const el = document.getElementById(containerId);
+      el.innerHTML = `
+        <span class="small">Всего: ${payload.total}</span>
+        <button ${payload.has_prev ? '' : 'disabled'} data-page="${payload.page - 1}">← Назад</button>
+        <span class="small">Страница ${payload.page} / ${payload.pages}</span>
+        <button ${payload.has_next ? '' : 'disabled'} data-page="${payload.page + 1}">Вперёд →</button>
+      `;
+
+      el.querySelectorAll('button[data-page]').forEach(btn => {
+        btn.addEventListener('click', () => onPageChange(Number(btn.dataset.page)));
+      });
+    }
+
+    async function loadEvents() {
+      const response = await fetch(`/api/events?page=${state.events.page}&per_page=${state.events.perPage}`);
+      const data = await response.json();
+
+      const eventsBody = document.getElementById('events-body');
+      eventsBody.innerHTML = data.items.map(row => `
+        <tr>
+          <td><a href="/ui/events/${row.id}">${row.id}</a></td>
+          <td>${row.device_id}</td>
+          <td>${fmt(row.received_at)}</td>
+          <td>${row.event_type}</td>
+          <td>${safe(row.temperature_c)}</td>
+          <td>${safe(row.humidity_pct)}</td>
+          <td>${yesNo(row.motion)}</td>
+          <td>${yesNo(row.sound)}</td>
+          <td>${row.photo_url ? `<a href="${row.photo_url}" target="_blank">открыть</a>` : '-'}</td>
+        </tr>
+      `).join('');
+
+      renderPager('events-pager', data, (page) => {
+        state.events.page = page;
+        loadEvents();
+      });
+    }
+
+    async function loadTelemetry() {
+      const response = await fetch(`/api/telemetry?page=${state.telemetry.page}&per_page=${state.telemetry.perPage}`);
+      const data = await response.json();
+
+      const telemetryBody = document.getElementById('telemetry-body');
+      telemetryBody.innerHTML = data.items.map(row => `
+        <tr>
+          <td><a href="/ui/telemetry/${row.id}">${row.id}</a></td>
+          <td>${row.device_id}</td>
+          <td>${fmt(row.received_at)}</td>
+          <td>${safe(row.temperature_c)}</td>
+          <td>${safe(row.humidity_pct)}</td>
+          <td>${yesNo(row.motion)}</td>
+          <td>${yesNo(row.sound)}</td>
+        </tr>
+      `).join('');
+
+      renderPager('telemetry-pager', data, (page) => {
+        state.telemetry.page = page;
+        loadTelemetry();
+      });
+    }
+
+    async function loadPhotos() {
+      const response = await fetch(`/api/photos?page=${state.photos.page}&per_page=${state.photos.perPage}`);
+      const data = await response.json();
+
+      const gallery = document.getElementById('photos-gallery');
+      gallery.innerHTML = data.items.map(photo => `
+        <div class="photo-card">
+          <a href="${photo.url}" target="_blank">
+            <img src="${photo.url}" alt="photo-${photo.id}">
+          </a>
+          <div class="photo-meta">
+            <div><strong>Фото #${photo.id}</strong></div>
+            <div>camera: ${photo.camera_id}</div>
+            <div>event: ${photo.alarm_event_id ?? '-'}</div>
+            <div>${fmt(photo.captured_at)}</div>
+          </div>
+        </div>
+      `).join('');
+
+      renderPager('photos-pager', data, (page) => {
+        state.photos.page = page;
+        loadPhotos();
+      });
+    }
+
+    async function loadAll() {
+      await Promise.all([loadEvents(), loadTelemetry(), loadPhotos()]);
+    }
+
+    loadAll();
+    setInterval(loadAll, 10000);
+  </script>
+</body>
+</html>

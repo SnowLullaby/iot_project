@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telemetry {{ telemetry.id }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f5f7fb; color: #18212f; margin: 0; }
+    main { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    .card { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0f1720; color: #e8eef8; padding: 12px; border-radius: 10px; }
+    a { color: #1f4b99; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="/">← Назад на dashboard</a></p>
+
+    <section class="card">
+      <h1>Телеметрия #{{ telemetry.id }}</h1>
+      <p><strong>Устройство:</strong> {{ telemetry.device_id }}</p>
+      <p><strong>Время:</strong> {{ telemetry.received_at }}</p>
+      <p><strong>Температура:</strong> {{ telemetry.temperature_c }}</p>
+      <p><strong>Влажность:</strong> {{ telemetry.humidity_pct }}</p>
+      <p><strong>Движение:</strong> {{ telemetry.motion }}</p>
+      <p><strong>Шум:</strong> {{ telemetry.sound }}</p>
+      <p><strong>RSSI:</strong> {{ telemetry.wifi_rssi }} dBm</p>
+      <p><strong>Uptime:</strong> {{ telemetry.uptime_ms }}</p>
+      <p><strong>Source:</strong> {{ telemetry.source }}</p>
+    </section>
+
+    <section class="card">
+      <h2>raw_payload</h2>
+      <pre>{{ telemetry.raw_payload | tojson(indent=2) }}</pre>
+    </section>
+  </main>
+</body>
+</html>
