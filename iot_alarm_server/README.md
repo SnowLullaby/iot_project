@@ -24,9 +24,9 @@ docker compose up -d --build
 ```
 
 После запуска:
-- dashboard: http://213.176.65.184:8000/
-- Swagger: http://213.176.65.184:8000/docs
-- MQTT broker: 213.176.65.184:1883
+- dashboard: http://138.124.103.73:8000/
+- Swagger: http://138.124.103.73:8000/docs
+- MQTT broker: 138.124.103.73:1883
 
 ## Новый поток данных
 1. ESP8266 отправляет telemetry и alarm в MQTT

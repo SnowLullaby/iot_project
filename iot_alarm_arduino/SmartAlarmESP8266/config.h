@@ -3,7 +3,7 @@
 #define WIFI_SSID "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 
-#define MQTT_HOST "213.176.65.184"
+#define MQTT_HOST "138.124.103.73"
 #define MQTT_PORT 1883
 #define MQTT_USERNAME "iot_user"
 #define MQTT_PASSWORD "iot_password"
