@@ -5,29 +5,99 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Админка IoT Alarm</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #f5f7fb; color: #18212f; margin: 0; }
-    main { max-width: 900px; margin: 0 auto; padding: 24px; }
-    .card { background: white; border-radius: 12px; padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
-    h1, h2 { margin-top: 0; }
-    label { display: block; margin: 12px 0 6px; font-weight: 600; }
-    input { width: 100%; padding: 10px; border: 1px solid #ccd5e3; border-radius: 8px; }
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f7fb;
+      color: #18212f;
+      margin: 0;
+    }
+
+    main {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      margin: 0 0 18px;
+    }
+
+    h2 {
+      margin: 24px 0 12px;
+      font-size: 20px;
+    }
+
+    h2:first-of-type {
+      margin-top: 0;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      font-weight: 600;
+    }
+
+    input {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ccd5e3;
+      border-radius: 8px;
+      font-size: 15px;
+      background: #fff;
+    }
+
     button {
-      margin-top: 16px;
+      margin-top: 20px;
       border: none;
       background: #1f4b99;
       color: white;
       border-radius: 8px;
       padding: 10px 16px;
       cursor: pointer;
+      font-size: 15px;
     }
-    .ok { background: #e9f8ee; color: #175c2c; padding: 10px; border-radius: 8px; margin-bottom: 16px; }
-    a { color: #1f4b99; }
-    .hint { color: #607089; font-size: 14px; }
+
+    button:hover {
+      opacity: 0.95;
+    }
+
+    .ok {
+      background: #e9f8ee;
+      color: #175c2c;
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    a {
+      color: #1f4b99;
+    }
+
+    .hint {
+      color: #607089;
+      font-size: 14px;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
   </style>
 </head>
 <body>
   <main>
-    <p><a href="/">← Назад на dashboard</a></p>
+    <p><a href="/">← Назад</a></p>
 
     <section class="card">
       <h1>Админская страница</h1>
@@ -57,7 +127,7 @@
 
         <label>JPEG quality</label>
         <input type="number" min="10" max="63" name="camera_jpeg_quality" value="{{ settings.camera_jpeg_quality }}" required>
-        <div class="hint">Для ESP32-CAM меньшее число = лучшее качество и больший размер файла. Обычно удобно 10–20.</div>
+        <div class="hint">Допустимый диапазон: от 10 до 63.</div>
 
         <button type="submit">Сохранить</button>
       </form>
